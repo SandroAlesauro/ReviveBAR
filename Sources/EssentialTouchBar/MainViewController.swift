@@ -59,6 +59,11 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         startStatusRefreshTimer()
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        view.window?.touchBar = makeTouchBar()
+    }
+
     deinit {
         refreshTimer?.invalidate()
     }
@@ -95,41 +100,43 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         makeItemForIdentifier identifier: NSTouchBarItem.Identifier
     ) -> NSTouchBarItem? {
         if let module = EssentialModule.allCases.first(where: { $0.itemIdentifier == identifier }) {
-            let item = NSCustomTouchBarItem(identifier: identifier)
-            let button = touchBarButton(
+            let item = touchBarButtonItem(
+                identifier: identifier,
                 title: module.title,
-                symbolName: module.symbolName,
-                identifierRawValue: module.rawValue
+                symbolName: module.symbolName
             )
-            item.view = button
             return item
         }
 
         if let action = customAction(for: identifier) {
-            let item = NSCustomTouchBarItem(identifier: identifier)
-            let button = touchBarButton(
+            let item = touchBarButtonItem(
+                identifier: identifier,
                 title: action.title,
-                symbolName: "sparkles",
-                identifierRawValue: "\(customIdentifierPrefix)\(action.id)"
+                symbolName: "sparkles"
             )
-            item.view = button
             return item
         }
 
         return nil
     }
 
-    private func touchBarButton(
+    private func touchBarButtonItem(
+        identifier: NSTouchBarItem.Identifier,
         title: String,
-        symbolName: String,
-        identifierRawValue: String
-    ) -> NSButton {
-        let button = NSButton(title: title, target: self, action: #selector(handleTouchBarAction(_:)))
-        button.bezelColor = .controlAccentColor
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
-        button.imagePosition = .imageLeading
-        button.identifier = NSUserInterfaceItemIdentifier(identifierRawValue)
-        return button
+        symbolName: String
+    ) -> NSButtonTouchBarItem {
+        let item = NSButtonTouchBarItem(
+            identifier: identifier,
+            title: title,
+            target: self,
+            action: #selector(handleTouchBarItemAction(_:))
+        )
+        item.bezelColor = .controlAccentColor
+        item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+        item.customizationLabel = title
+        item.target = self
+        item.action = #selector(handleTouchBarItemAction(_:))
+        return item
     }
 
     private func setupLayout() {
@@ -384,7 +391,9 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
     }
 
     private func reloadTouchBar() {
-        touchBar = makeTouchBar()
+        let newTouchBar = makeTouchBar()
+        touchBar = newTouchBar
+        view.window?.touchBar = newTouchBar
     }
 
     private func customIdentifier(for action: CustomTouchBarAction) -> NSTouchBarItem.Identifier {
@@ -423,13 +432,14 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
     }
 
     @objc
-    private func handleTouchBarAction(_ sender: NSButton) {
-        guard let rawIdentifier = sender.identifier?.rawValue else {
+    private func handleTouchBarItemAction(_ sender: NSButtonTouchBarItem) {
+        let rawIdentifier = sender.identifier.rawValue
+        if rawIdentifier.isEmpty {
             updateStatus("Unknown action.")
             return
         }
 
-        if let module = EssentialModule(rawValue: rawIdentifier) {
+        if let module = EssentialModule.allCases.first(where: { $0.itemIdentifier.rawValue == rawIdentifier }) {
             perform(module)
             return
         }

@@ -30,6 +30,16 @@ ReviveBAR includes a real **Create mode**:
 
 Custom buttons are persisted per profile and can be deleted from the same panel.
 
+## Touch Bar behavior notes
+
+ReviveBAR uses AppKit touch bar providers and button items (see Apple/AppKit references) and refreshes the window touch bar whenever profile or custom actions change.
+
+If you don't see app items:
+
+- keep ReviveBAR as the active foreground app
+- open **System Settings → Keyboard**
+- set Touch Bar behavior to app controls (not only expanded control strip)
+
 ## Requirements
 
 - macOS 12 or later
