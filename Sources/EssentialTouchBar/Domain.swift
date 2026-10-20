@@ -17,6 +17,28 @@ enum EssentialModule: String, Codable, CaseIterable {
         }
     }
 
+    var subtitle: String {
+        switch self {
+        case .quickNote:
+            return "Capture thoughts instantly."
+        case .clipboard:
+            return "Save your latest copied text."
+        case .focus:
+            return "Run a 25-minute focus sprint."
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .quickNote:
+            return "square.and.pencil"
+        case .clipboard:
+            return "doc.on.doc"
+        case .focus:
+            return "timer"
+        }
+    }
+
     var itemIdentifier: NSTouchBarItem.Identifier {
         NSTouchBarItem.Identifier("com.revivebar.module.\(rawValue)")
     }

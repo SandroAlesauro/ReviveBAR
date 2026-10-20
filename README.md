@@ -4,6 +4,15 @@ ReviveBAR is a native macOS app that brings the Touch Bar back to life with focu
 
 The project is **open source** and intentionally **vibecoded**: fast iteration, product taste first, and pragmatic engineering choices that keep the app useful in real workflows.
 
+## Design language
+
+ReviveBAR uses a native Apple visual system (materials, spacing, typography, and subtle depth) with a Nothing-inspired “essential apps” concept:
+
+- each module is a focused micro-tool
+- one tap to action
+- minimal, high-contrast card layout
+- fast context switching through profiles
+
 ## Current modules
 
 - **Quick Note**: save short notes in one tap.

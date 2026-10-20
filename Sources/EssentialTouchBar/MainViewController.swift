@@ -1,13 +1,17 @@
 import AppKit
 
 final class MainViewController: NSViewController, NSTouchBarDelegate {
-    private let statusLabel = NSTextField(labelWithString: "ReviveBAR is ready.")
-    private let profilePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let profileControl = NSSegmentedControl(labels: [], trackingMode: .selectOne, target: nil, action: nil)
     private let rotateLayoutButton = NSButton(title: "Rotate layout", target: nil, action: nil)
+    private let statusLabel = NSTextField(labelWithString: "ReviveBAR is ready.")
+    private let moduleStack = NSStackView()
+
     private let profileStore = ProfileStore()
     private let clipboardStore = ClipboardStackStore()
     private let focusStore = FocusSessionStore()
     private let quickNoteStore: QuickNoteStore
+
+    private var profiles: [TouchBarProfile] = []
     private var currentProfile: TouchBarProfile?
     private var refreshTimer: Timer?
 
@@ -15,7 +19,7 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         do {
             self.quickNoteStore = try QuickNoteStore()
         } catch {
-            fatalError("Impossibile inizializzare QuickNoteStore: \(error)")
+            fatalError("Unable to initialize QuickNoteStore: \(error)")
         }
         super.init(nibName: nil, bundle: nil)
     }
@@ -26,9 +30,10 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
     }
 
     override func loadView() {
-        view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let rootView = NSView()
+        rootView.wantsLayer = true
+        rootView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        view = rootView
     }
 
     override func viewDidLoad() {
@@ -40,62 +45,6 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
 
     deinit {
         refreshTimer?.invalidate()
-    }
-
-    private func setupLayout() {
-        profilePopup.target = self
-        profilePopup.action = #selector(handleProfileChange(_:))
-        profilePopup.translatesAutoresizingMaskIntoConstraints = false
-
-        rotateLayoutButton.target = self
-        rotateLayoutButton.action = #selector(handleRotateLayout(_:))
-        rotateLayoutButton.bezelStyle = .rounded
-        rotateLayoutButton.translatesAutoresizingMaskIntoConstraints = false
-
-        statusLabel.font = .systemFont(ofSize: 18, weight: .medium)
-        statusLabel.alignment = .center
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let titleLabel = NSTextField(labelWithString: "ReviveBAR")
-        titleLabel.font = .systemFont(ofSize: 28, weight: .bold)
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        view.addSubview(statusLabel)
-        view.addSubview(profilePopup)
-        view.addSubview(rotateLayoutButton)
-        view.addSubview(titleLabel)
-
-        NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 40),
-            titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            profilePopup.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 24),
-            profilePopup.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            rotateLayoutButton.topAnchor.constraint(equalTo: profilePopup.bottomAnchor, constant: 16),
-            rotateLayoutButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            statusLabel.topAnchor.constraint(equalTo: rotateLayoutButton.bottomAnchor, constant: 30)
-        ])
-    }
-
-    private func loadProfiles() {
-        do {
-            let profiles = try profileStore.allProfiles()
-            profilePopup.removeAllItems()
-            profilePopup.addItems(withTitles: profiles.map(\.name))
-            let selected = try profileStore.selectedProfile()
-            currentProfile = selected
-            if let selectedIndex = profiles.firstIndex(where: { $0.id == selected.id }) {
-                profilePopup.selectItem(at: selectedIndex)
-            }
-            reloadTouchBar()
-            updateStatus("Profile \(selected.name) loaded.")
-        } catch {
-            updateStatus("Profile error: \(error.localizedDescription)")
-        }
-    }
-
-    private func reloadTouchBar() {
-        touchBar = makeTouchBar()
     }
 
     override func makeTouchBar() -> NSTouchBar? {
@@ -130,34 +79,182 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         return item
     }
 
-    @objc
-    private func handleTouchBarAction(_ sender: NSButton) {
-        guard let rawIdentifier = sender.identifier?.rawValue else {
-            return
-        }
+    private func setupLayout() {
+        let shellView = NSVisualEffectView()
+        shellView.material = .hudWindow
+        shellView.blendingMode = .behindWindow
+        shellView.state = .active
+        shellView.wantsLayer = true
+        shellView.layer?.cornerRadius = 18
+        shellView.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.30).cgColor
+        shellView.layer?.borderWidth = 1
+        shellView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(shellView)
 
-        switch rawIdentifier {
-        case EssentialModule.quickNote.rawValue:
-            openQuickNoteComposer()
-        case EssentialModule.clipboard.rawValue:
-            captureClipboard()
-        case EssentialModule.focus.rawValue:
-            toggleFocusSession()
-        default:
-            updateStatus("Unknown action.")
+        let titleLabel = NSTextField(labelWithString: "ReviveBAR")
+        titleLabel.font = .systemFont(ofSize: 34, weight: .bold)
+
+        let subtitleLabel = NSTextField(labelWithString: "Apple-native UI with Nothing-style essential actions.")
+        subtitleLabel.font = .systemFont(ofSize: 13, weight: .regular)
+        subtitleLabel.textColor = .secondaryLabelColor
+
+        let headingStack = NSStackView(views: [titleLabel, subtitleLabel])
+        headingStack.orientation = .vertical
+        headingStack.alignment = .leading
+        headingStack.spacing = 6
+
+        profileControl.segmentStyle = .rounded
+        profileControl.target = self
+        profileControl.action = #selector(handleProfileChange(_:))
+
+        rotateLayoutButton.bezelStyle = .rounded
+        rotateLayoutButton.target = self
+        rotateLayoutButton.action = #selector(handleRotateLayout(_:))
+
+        let controlRow = NSStackView(views: [profileControl, rotateLayoutButton])
+        controlRow.orientation = .horizontal
+        controlRow.alignment = .centerY
+        controlRow.spacing = 12
+
+        let modulesTitle = NSTextField(labelWithString: "Essential apps")
+        modulesTitle.font = .systemFont(ofSize: 14, weight: .semibold)
+
+        moduleStack.orientation = .vertical
+        moduleStack.alignment = .leading
+        moduleStack.spacing = 10
+        moduleStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let statusContainer = NSVisualEffectView()
+        statusContainer.material = .menu
+        statusContainer.blendingMode = .withinWindow
+        statusContainer.state = .active
+        statusContainer.wantsLayer = true
+        statusContainer.layer?.cornerRadius = 10
+        statusContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusContainer.addSubview(statusLabel)
+
+        let rootStack = NSStackView(views: [headingStack, controlRow, modulesTitle, moduleStack, statusContainer])
+        rootStack.orientation = .vertical
+        rootStack.alignment = .leading
+        rootStack.spacing = 18
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+        shellView.addSubview(rootStack)
+
+        NSLayoutConstraint.activate([
+            shellView.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
+            shellView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            shellView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            shellView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -20),
+
+            rootStack.topAnchor.constraint(equalTo: shellView.topAnchor, constant: 24),
+            rootStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 24),
+            rootStack.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -24),
+            rootStack.bottomAnchor.constraint(lessThanOrEqualTo: shellView.bottomAnchor, constant: -24),
+
+            statusContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 360),
+            statusLabel.topAnchor.constraint(equalTo: statusContainer.topAnchor, constant: 8),
+            statusLabel.leadingAnchor.constraint(equalTo: statusContainer.leadingAnchor, constant: 10),
+            statusLabel.trailingAnchor.constraint(equalTo: statusContainer.trailingAnchor, constant: -10),
+            statusLabel.bottomAnchor.constraint(equalTo: statusContainer.bottomAnchor, constant: -8)
+        ])
+    }
+
+    private func loadProfiles() {
+        do {
+            profiles = try profileStore.allProfiles()
+            configureProfileControl(with: profiles)
+
+            let selected = try profileStore.selectedProfile()
+            currentProfile = selected
+
+            if let selectedIndex = profiles.firstIndex(where: { $0.id == selected.id }) {
+                profileControl.selectedSegment = selectedIndex
+            }
+
+            renderModuleCards()
+            reloadTouchBar()
+            updateStatus("Profile \(selected.name) loaded.")
+        } catch {
+            updateStatus("Profile error: \(error.localizedDescription)")
         }
     }
 
+    private func configureProfileControl(with profiles: [TouchBarProfile]) {
+        profileControl.segmentCount = profiles.count
+        for (index, profile) in profiles.enumerated() {
+            profileControl.setLabel(profile.name, forSegment: index)
+        }
+    }
+
+    private func renderModuleCards() {
+        moduleStack.arrangedSubviews.forEach { view in
+            moduleStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        guard let profile = currentProfile else {
+            return
+        }
+
+        for module in profile.modules {
+            let card = ModuleCardView(module: module, actionTitle: actionTitle(for: module)) { [weak self] in
+                self?.perform(module)
+            }
+            card.widthAnchor.constraint(equalToConstant: 620).isActive = true
+            moduleStack.addArrangedSubview(card)
+        }
+    }
+
+    private func actionTitle(for module: EssentialModule) -> String {
+        switch module {
+        case .quickNote:
+            return "Add"
+        case .clipboard:
+            return "Capture"
+        case .focus:
+            return focusStore.activeUntil() == nil ? "Start" : "Stop"
+        }
+    }
+
+    private func perform(_ module: EssentialModule) {
+        switch module {
+        case .quickNote:
+            openQuickNoteComposer()
+        case .clipboard:
+            captureClipboard()
+        case .focus:
+            toggleFocusSession()
+        }
+    }
+
+    private func reloadTouchBar() {
+        touchBar = makeTouchBar()
+    }
+
     @objc
-    private func handleProfileChange(_ sender: NSPopUpButton) {
+    private func handleTouchBarAction(_ sender: NSButton) {
+        guard let rawIdentifier = sender.identifier?.rawValue,
+              let module = EssentialModule(rawValue: rawIdentifier) else {
+            updateStatus("Unknown action.")
+            return
+        }
+        perform(module)
+    }
+
+    @objc
+    private func handleProfileChange(_ sender: NSSegmentedControl) {
         do {
-            let profiles = try profileStore.allProfiles()
-            guard sender.indexOfSelectedItem >= 0, sender.indexOfSelectedItem < profiles.count else {
+            guard sender.selectedSegment >= 0, sender.selectedSegment < profiles.count else {
                 throw ReviveBARError.invalidProfileSelection
             }
-            let selectedProfile = profiles[sender.indexOfSelectedItem]
+            let selectedProfile = profiles[sender.selectedSegment]
             try profileStore.setSelectedProfile(id: selectedProfile.id)
             currentProfile = selectedProfile
+            renderModuleCards()
             reloadTouchBar()
             updateStatus("Profile \(selectedProfile.name) active.")
         } catch {
@@ -178,7 +275,12 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
             profile.modules.removeFirst()
             profile.modules.append(first)
             try profileStore.updateProfile(profile)
+
+            if let profileIndex = profiles.firstIndex(where: { $0.id == profile.id }) {
+                profiles[profileIndex] = profile
+            }
             currentProfile = profile
+            renderModuleCards()
             reloadTouchBar()
             updateStatus("Layout for profile \(profile.name) updated.")
         } catch {
@@ -191,6 +293,7 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         alert.messageText = "New Quick Note"
         alert.informativeText = "Write a quick note."
         alert.alertStyle = .informational
+
         let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         inputField.placeholderString = "Type here..."
         alert.accessoryView = inputField
@@ -233,6 +336,7 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
             focusStore.startSession(minutes: 25)
             updateFocusStatus()
         }
+        renderModuleCards()
     }
 
     private func startStatusRefreshTimer() {
