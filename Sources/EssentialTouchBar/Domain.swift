@@ -55,10 +55,19 @@ struct QuickNoteEntry: Codable, Equatable {
     let createdAt: Date
 }
 
+struct CustomTouchBarAction: Codable, Equatable {
+    let id: String
+    let title: String
+    let payload: String
+    let createdAt: Date
+}
+
 enum ReviveBARError: Error, LocalizedError {
     case noClipboardText
     case emptyQuickNote
     case invalidProfileSelection
+    case emptyCustomActionTitle
+    case emptyCustomActionPayload
 
     var errorDescription: String? {
         switch self {
@@ -68,6 +77,10 @@ enum ReviveBARError: Error, LocalizedError {
             return "The quick note cannot be empty."
         case .invalidProfileSelection:
             return "Invalid profile selection."
+        case .emptyCustomActionTitle:
+            return "Custom button title cannot be empty."
+        case .emptyCustomActionPayload:
+            return "Custom button payload cannot be empty."
         }
     }
 }

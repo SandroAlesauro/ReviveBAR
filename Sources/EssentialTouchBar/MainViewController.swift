@@ -1,19 +1,35 @@
 import AppKit
 
+private enum WorkspaceMode: Int {
+    case use = 0
+    case create = 1
+}
+
 final class MainViewController: NSViewController, NSTouchBarDelegate {
     private let profileControl = NSSegmentedControl(labels: [], trackingMode: .selectOne, target: nil, action: nil)
+    private let modeControl = NSSegmentedControl(labels: ["Use", "Create"], trackingMode: .selectOne, target: nil, action: nil)
     private let rotateLayoutButton = NSButton(title: "Rotate layout", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "ReviveBAR is ready.")
     private let moduleStack = NSStackView()
 
+    private let createPanel = NSVisualEffectView()
+    private let customTitleField = NSTextField()
+    private let customPayloadField = NSTextField()
+    private let addCustomActionButton = NSButton(title: "Add custom button", target: nil, action: nil)
+    private let customActionsStack = NSStackView()
+
     private let profileStore = ProfileStore()
+    private let customActionStore = CustomActionStore()
     private let clipboardStore = ClipboardStackStore()
     private let focusStore = FocusSessionStore()
     private let quickNoteStore: QuickNoteStore
 
     private var profiles: [TouchBarProfile] = []
     private var currentProfile: TouchBarProfile?
+    private var customActions: [CustomTouchBarAction] = []
     private var refreshTimer: Timer?
+
+    private let customIdentifierPrefix = "com.revivebar.custom."
 
     init() {
         do {
@@ -51,8 +67,10 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         guard let profile = currentProfile else {
             return nil
         }
+
         let touchBar = NSTouchBar()
         touchBar.delegate = self
+
         var identifiers: [NSTouchBarItem.Identifier] = []
         for (index, module) in profile.modules.enumerated() {
             identifiers.append(module.itemIdentifier)
@@ -60,6 +78,14 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
                 identifiers.append(.flexibleSpace)
             }
         }
+
+        if !customActions.isEmpty {
+            if !identifiers.isEmpty {
+                identifiers.append(.flexibleSpace)
+            }
+            identifiers.append(contentsOf: customActions.map { customIdentifier(for: $0) })
+        }
+
         touchBar.defaultItemIdentifiers = identifiers
         return touchBar
     }
@@ -68,15 +94,42 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         _ touchBar: NSTouchBar,
         makeItemForIdentifier identifier: NSTouchBarItem.Identifier
     ) -> NSTouchBarItem? {
-        guard let module = EssentialModule.allCases.first(where: { $0.itemIdentifier == identifier }) else {
-            return nil
+        if let module = EssentialModule.allCases.first(where: { $0.itemIdentifier == identifier }) {
+            let item = NSCustomTouchBarItem(identifier: identifier)
+            let button = touchBarButton(
+                title: module.title,
+                symbolName: module.symbolName,
+                identifierRawValue: module.rawValue
+            )
+            item.view = button
+            return item
         }
-        let item = NSCustomTouchBarItem(identifier: identifier)
-        let button = NSButton(title: module.title, target: self, action: #selector(handleTouchBarAction(_:)))
+
+        if let action = customAction(for: identifier) {
+            let item = NSCustomTouchBarItem(identifier: identifier)
+            let button = touchBarButton(
+                title: action.title,
+                symbolName: "sparkles",
+                identifierRawValue: "\(customIdentifierPrefix)\(action.id)"
+            )
+            item.view = button
+            return item
+        }
+
+        return nil
+    }
+
+    private func touchBarButton(
+        title: String,
+        symbolName: String,
+        identifierRawValue: String
+    ) -> NSButton {
+        let button = NSButton(title: title, target: self, action: #selector(handleTouchBarAction(_:)))
         button.bezelColor = .controlAccentColor
-        button.identifier = NSUserInterfaceItemIdentifier(module.rawValue)
-        item.view = button
-        return item
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+        button.imagePosition = .imageLeading
+        button.identifier = NSUserInterfaceItemIdentifier(identifierRawValue)
+        return button
     }
 
     private func setupLayout() {
@@ -107,11 +160,16 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         profileControl.target = self
         profileControl.action = #selector(handleProfileChange(_:))
 
+        modeControl.segmentStyle = .rounded
+        modeControl.selectedSegment = WorkspaceMode.use.rawValue
+        modeControl.target = self
+        modeControl.action = #selector(handleModeChange(_:))
+
         rotateLayoutButton.bezelStyle = .rounded
         rotateLayoutButton.target = self
         rotateLayoutButton.action = #selector(handleRotateLayout(_:))
 
-        let controlRow = NSStackView(views: [profileControl, rotateLayoutButton])
+        let controlRow = NSStackView(views: [profileControl, modeControl, rotateLayoutButton])
         controlRow.orientation = .horizontal
         controlRow.alignment = .centerY
         controlRow.spacing = 12
@@ -123,6 +181,8 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         moduleStack.alignment = .leading
         moduleStack.spacing = 10
         moduleStack.translatesAutoresizingMaskIntoConstraints = false
+
+        configureCreatePanel()
 
         let statusContainer = NSVisualEffectView()
         statusContainer.material = .menu
@@ -137,7 +197,7 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusContainer.addSubview(statusLabel)
 
-        let rootStack = NSStackView(views: [headingStack, controlRow, modulesTitle, moduleStack, statusContainer])
+        let rootStack = NSStackView(views: [headingStack, controlRow, modulesTitle, moduleStack, createPanel, statusContainer])
         rootStack.orientation = .vertical
         rootStack.alignment = .leading
         rootStack.spacing = 18
@@ -163,6 +223,61 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         ])
     }
 
+    private func configureCreatePanel() {
+        createPanel.material = .menu
+        createPanel.blendingMode = .withinWindow
+        createPanel.state = .active
+        createPanel.wantsLayer = true
+        createPanel.layer?.cornerRadius = 12
+        createPanel.translatesAutoresizingMaskIntoConstraints = false
+        createPanel.isHidden = true
+
+        let createTitle = NSTextField(labelWithString: "Create mode")
+        createTitle.font = .systemFont(ofSize: 14, weight: .semibold)
+
+        let createSubtitle = NSTextField(labelWithString: "Build custom Touch Bar buttons that paste text anywhere.")
+        createSubtitle.font = .systemFont(ofSize: 12, weight: .regular)
+        createSubtitle.textColor = .secondaryLabelColor
+
+        customTitleField.placeholderString = "Button title (e.g. Daily Standup)"
+        customPayloadField.placeholderString = "Button payload (text copied to clipboard)"
+
+        addCustomActionButton.bezelStyle = .rounded
+        addCustomActionButton.target = self
+        addCustomActionButton.action = #selector(handleAddCustomAction(_:))
+
+        customActionsStack.orientation = .vertical
+        customActionsStack.alignment = .leading
+        customActionsStack.spacing = 8
+
+        let createHeader = NSStackView(views: [createTitle, createSubtitle])
+        createHeader.orientation = .vertical
+        createHeader.alignment = .leading
+        createHeader.spacing = 4
+
+        let formStack = NSStackView(views: [customTitleField, customPayloadField, addCustomActionButton])
+        formStack.orientation = .horizontal
+        formStack.alignment = .centerY
+        formStack.spacing = 8
+
+        let panelStack = NSStackView(views: [createHeader, formStack, customActionsStack])
+        panelStack.orientation = .vertical
+        panelStack.alignment = .leading
+        panelStack.spacing = 10
+        panelStack.translatesAutoresizingMaskIntoConstraints = false
+        createPanel.addSubview(panelStack)
+
+        NSLayoutConstraint.activate([
+            createPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 640),
+            customTitleField.widthAnchor.constraint(equalToConstant: 180),
+            customPayloadField.widthAnchor.constraint(equalToConstant: 300),
+            panelStack.topAnchor.constraint(equalTo: createPanel.topAnchor, constant: 14),
+            panelStack.leadingAnchor.constraint(equalTo: createPanel.leadingAnchor, constant: 14),
+            panelStack.trailingAnchor.constraint(equalTo: createPanel.trailingAnchor, constant: -14),
+            panelStack.bottomAnchor.constraint(equalTo: createPanel.bottomAnchor, constant: -14)
+        ])
+    }
+
     private func loadProfiles() {
         do {
             profiles = try profileStore.allProfiles()
@@ -170,12 +285,13 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
 
             let selected = try profileStore.selectedProfile()
             currentProfile = selected
-
             if let selectedIndex = profiles.firstIndex(where: { $0.id == selected.id }) {
                 profileControl.selectedSegment = selectedIndex
             }
 
+            try loadCustomActions()
             renderModuleCards()
+            renderCustomActionsList()
             reloadTouchBar()
             updateStatus("Profile \(selected.name) loaded.")
         } catch {
@@ -209,6 +325,42 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         }
     }
 
+    private func renderCustomActionsList() {
+        customActionsStack.arrangedSubviews.forEach { view in
+            customActionsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        guard !customActions.isEmpty else {
+            let emptyLabel = NSTextField(labelWithString: "No custom buttons yet.")
+            emptyLabel.textColor = .secondaryLabelColor
+            customActionsStack.addArrangedSubview(emptyLabel)
+            return
+        }
+
+        for action in customActions {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 8
+
+            let label = NSTextField(labelWithString: "\(action.title) → \(action.payload)")
+            label.font = .systemFont(ofSize: 12, weight: .regular)
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+            let deleteButton = NSButton(title: "Delete", target: self, action: #selector(handleDeleteCustomAction(_:)))
+            deleteButton.bezelStyle = .rounded
+            deleteButton.identifier = NSUserInterfaceItemIdentifier(action.id)
+
+            row.addArrangedSubview(label)
+            row.addArrangedSubview(deleteButton)
+            row.widthAnchor.constraint(equalToConstant: 560).isActive = true
+            customActionsStack.addArrangedSubview(row)
+        }
+    }
+
     private func actionTitle(for module: EssentialModule) -> String {
         switch module {
         case .quickNote:
@@ -235,14 +387,64 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
         touchBar = makeTouchBar()
     }
 
+    private func customIdentifier(for action: CustomTouchBarAction) -> NSTouchBarItem.Identifier {
+        NSTouchBarItem.Identifier("\(customIdentifierPrefix)\(action.id)")
+    }
+
+    private func customAction(for identifier: NSTouchBarItem.Identifier) -> CustomTouchBarAction? {
+        guard identifier.rawValue.hasPrefix(customIdentifierPrefix) else {
+            return nil
+        }
+        let actionID = String(identifier.rawValue.dropFirst(customIdentifierPrefix.count))
+        return customActions.first(where: { $0.id == actionID })
+    }
+
+    private func currentWorkspaceMode() -> WorkspaceMode {
+        WorkspaceMode(rawValue: modeControl.selectedSegment) ?? .use
+    }
+
+    private func applyModeVisibility() {
+        createPanel.isHidden = currentWorkspaceMode() == .use
+    }
+
+    private func loadCustomActions() throws {
+        guard let profileID = currentProfile?.id else {
+            customActions = []
+            return
+        }
+        customActions = try customActionStore.actions(for: profileID)
+    }
+
+    private func runCustomAction(_ action: CustomTouchBarAction) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(action.payload, forType: .string)
+        updateStatus("Custom button \(action.title) copied payload to clipboard.")
+    }
+
     @objc
     private func handleTouchBarAction(_ sender: NSButton) {
-        guard let rawIdentifier = sender.identifier?.rawValue,
-              let module = EssentialModule(rawValue: rawIdentifier) else {
+        guard let rawIdentifier = sender.identifier?.rawValue else {
             updateStatus("Unknown action.")
             return
         }
-        perform(module)
+
+        if let module = EssentialModule(rawValue: rawIdentifier) {
+            perform(module)
+            return
+        }
+
+        if rawIdentifier.hasPrefix(customIdentifierPrefix) {
+            let actionID = String(rawIdentifier.dropFirst(customIdentifierPrefix.count))
+            guard let action = customActions.first(where: { $0.id == actionID }) else {
+                updateStatus("Custom action not found.")
+                return
+            }
+            runCustomAction(action)
+            return
+        }
+
+        updateStatus("Unknown action.")
     }
 
     @objc
@@ -254,12 +456,19 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
             let selectedProfile = profiles[sender.selectedSegment]
             try profileStore.setSelectedProfile(id: selectedProfile.id)
             currentProfile = selectedProfile
+            try loadCustomActions()
             renderModuleCards()
+            renderCustomActionsList()
             reloadTouchBar()
             updateStatus("Profile \(selectedProfile.name) active.")
         } catch {
             updateStatus("Profile switch error: \(error.localizedDescription)")
         }
+    }
+
+    @objc
+    private func handleModeChange(_ sender: NSSegmentedControl) {
+        applyModeVisibility()
     }
 
     @objc
@@ -285,6 +494,45 @@ final class MainViewController: NSViewController, NSTouchBarDelegate {
             updateStatus("Layout for profile \(profile.name) updated.")
         } catch {
             updateStatus("Layout save error: \(error.localizedDescription)")
+        }
+    }
+
+    @objc
+    private func handleAddCustomAction(_ sender: NSButton) {
+        do {
+            guard let profileID = currentProfile?.id else {
+                throw ReviveBARError.invalidProfileSelection
+            }
+            customActions = try customActionStore.addAction(
+                profileID: profileID,
+                title: customTitleField.stringValue,
+                payload: customPayloadField.stringValue
+            )
+            customTitleField.stringValue = ""
+            customPayloadField.stringValue = ""
+            renderCustomActionsList()
+            reloadTouchBar()
+            updateStatus("Custom button created.")
+        } catch {
+            updateStatus("Create mode error: \(error.localizedDescription)")
+        }
+    }
+
+    @objc
+    private func handleDeleteCustomAction(_ sender: NSButton) {
+        do {
+            guard let profileID = currentProfile?.id else {
+                throw ReviveBARError.invalidProfileSelection
+            }
+            guard let actionID = sender.identifier?.rawValue else {
+                return
+            }
+            customActions = try customActionStore.deleteAction(profileID: profileID, actionID: actionID)
+            renderCustomActionsList()
+            reloadTouchBar()
+            updateStatus("Custom button removed.")
+        } catch {
+            updateStatus("Delete error: \(error.localizedDescription)")
         }
     }
 

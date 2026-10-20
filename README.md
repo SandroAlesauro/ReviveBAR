@@ -19,6 +19,17 @@ ReviveBAR uses a native Apple visual system (materials, spacing, typography, and
 - **Clipboard Stack**: capture and keep recent clipboard text entries.
 - **Focus Session**: start a 25-minute focus timer from the Touch Bar.
 
+## Create mode (custom buttons)
+
+ReviveBAR includes a real **Create mode**:
+
+- switch from `Use` to `Create`
+- choose a button title
+- define the payload text
+- save it, and it appears on the Touch Bar
+
+Custom buttons are persisted per profile and can be deleted from the same panel.
+
 ## Requirements
 
 - macOS 12 or later
